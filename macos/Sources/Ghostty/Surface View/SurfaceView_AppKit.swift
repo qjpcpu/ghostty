@@ -192,6 +192,7 @@ extension Ghostty {
         var notificationIdentifiers: Set<String> = []
 
         private var markedText: NSMutableAttributedString
+        private var imeComposition = IMECompositionState()
         private(set) var focused: Bool = true
         private var prevPressureStage: Int = 0
         private var appearanceObserver: NSKeyValueObservation?
@@ -1951,6 +1952,8 @@ extension Ghostty.SurfaceView: NSTextInputClient {
             print("unknown marked text: \(string)")
         }
 
+        imeComposition.update(hasMarkedText: hasMarkedText(), inputSourceID: KeyboardLayout.id)
+
         // If we're not in a keyDown event, then we want to update our preedit
         // text immediately. This can happen due to external events, for example
         // changing keyboard layouts while composing: (1) set US intl (2) type '
@@ -1961,6 +1964,7 @@ extension Ghostty.SurfaceView: NSTextInputClient {
     }
 
     func unmarkText() {
+        imeComposition.reset()
         if self.markedText.length > 0 {
             self.markedText.mutableString.setString("")
             syncPreedit()
@@ -2070,6 +2074,17 @@ extension Ghostty.SurfaceView: NSTextInputClient {
     func insertText(_ string: Any, replacementRange: NSRange) {
         // We must have an associated event
         guard NSApp.currentEvent != nil else { return }
+
+        // Switching input sources can commit the old IME's unfinished text
+        // after the system has already selected the new source. Cancel that
+        // composition instead of forwarding it as terminal input (which could
+        // execute Normal-mode Vim commands). Explicit candidate confirmation
+        // keeps the same source and continues through the normal path below.
+        if imeComposition.shouldDiscardCommit(currentInputSourceID: KeyboardLayout.id) {
+            unmarkText()
+            leadSurrogate = nil
+            return
+        }
 
         // We want the string view of the any value
         var chars = ""
